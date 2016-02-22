@@ -44,4 +44,7 @@ tracx1.initialize_weights()
 
 ret = tracx1.run_full_simulation()
 
+print(ret) 
+
+ret = tracx1.test_strings(["abc","def,ghi"] )
 print(ret)
