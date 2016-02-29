@@ -87,10 +87,6 @@ class Tracx:
     def set_test_data(self,data):
         self.TestData = data
 
-    def get_input_encoding(self, token):
-        #return the input encoding for this token
-        return self.inputEncodings[token]
-        
     def create_results_object(self):
         return {
             "trainSuccess": False,
@@ -101,6 +97,18 @@ class Tracx:
             "trackingSteps":    -1,
             "trackingOutputs": -1
         }
+
+    def set_input_encodings(self, newEncodings):
+        #return the input encoding for this token
+        self.inputEncodings = newEncodings
+        #get inputwidth from one of the items        
+        tempitem = list(newEncodings.values())[0]
+        self.inputWidth = len(tempitem)
+
+    def get_input_encoding(self, token):
+        #return the input encoding for this token
+        return self.inputEncodings[token]
+        
 
     def create_input_encodings(self,method="local"):
         #set up input vectors for each token
@@ -299,7 +307,7 @@ class Tracx:
     def test_string(self, inString):
         '''Get network output for a single word input.
         
-        Passed a string of arbitrary length, test_string passes along the string
+        Passed a string  or list of arbitrary length, test_string passes along the string
         testing each bigram and return encodings and network activations.
         It also returns the average delta/error per bigram and the total delta.
         '''
@@ -383,7 +391,7 @@ class Tracx:
         
         return results_object
       
-    def run_full_simulation(self, printProgress = True):
+    def run_full_simulation(self, printProgress = False):
         self.reset()
         print("Random seed used: " + str(self.randomSeed))
         starttime =  time.time()
@@ -400,7 +408,7 @@ class Tracx:
             if printProgress:
                 print(str(1 + run_no) + ",")            
             if self.trackingFlag:
-                # NB tracking date will be overwritten for each new participant                
+                # NB tracking data will be overwritten for each new participant                
                 # initialise stacked array to store tracking data
                 self.trackingSteps = []
                 self.trackingResults = {}
