@@ -60,6 +60,8 @@ ys = ys.split("_")
 freq= {}
 freq.update(get_sequence_frequencies(ys,2))
 freq.update(get_sequence_frequencies(ys,3))
+freq.update(get_sequence_frequencies(ys,4))
+freq.update(get_sequence_frequencies(ys,5))
 
 
 tracx1.set_training_data(ys)
@@ -84,11 +86,11 @@ ret = tracx1.run_full_simulation()
 #ret = tracx1.test_strings(["abc","def,ghi"] )
 #print(ret)
 
-all_results = pd.DataFrame(columns = ["seq","freq","totalDelta","meanDelta"])
+all_results = pd.DataFrame(columns = ["seq","len","freq","totalDelta","meanDelta"])
 
 for item in freq:
     ret = tracx1.test_string(list(item))
-    all_results.loc[len(all_results)] = ["_".join(item),freq[item], ret["totalDelta"], ret["meanDelta"]]
+    all_results.loc[len(all_results)] = ["_".join(item),len(item),freq[item], ret["totalDelta"], ret["meanDelta"]]
 
 print(all_results)   
 
