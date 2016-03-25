@@ -19,11 +19,13 @@ import sys, random
 import time
 
 class Tracx:
-    """Truncated Autorecursive Chunk Extractor, version 1 (TRACX)."""
+    """Truncated Autorecursive Chunk Extractor (TRACX) version 1 & 2.
+    """
 
 
     def __init__(self):
         #default parameters
+        self.TracxVersion = 2
         self.learningRate = 0.04
         self.recognitionCriterion = 0.4
         self.reinforcementProbability = 0.25
@@ -39,6 +41,7 @@ class Tracx:
         self.inputWidth = 8 #how many input nodes per encoded token
         self.sigmoidType = "tanh"
         self.deltaRule = "rms"  # "rms" or "max"
+        self.coeff_tanh = 0.2197;
         # internal variables
         self.trackingFlag = False
         self.trackingSteps = []
@@ -66,16 +69,18 @@ class Tracx:
             return self.temperature * (1 - x*x) + self.fahlmanOffset
 
     def set_training_data(self,data):
-        #what is the string of training data
+        '''what is the string of training data'''
         self.trainingData = data
         self.trainingLength = len(data)
     
     def set_tracking_words(self,testWords):
+        '''test items we evaluate during training'''
         self.trackingFlag = True
         self.trackingWords = testWords
         self.trackingSteps = []
 
     def get_unique_items(self):
+        '''all distinct tokens in training set'''
         output = set()
         for x in self.trainingData:
             output.add(x)
@@ -97,6 +102,17 @@ class Tracx:
             "trackingSteps":    -1,
             "trackingOutputs": -1
         }
+    def create_result_object(self):
+        return {"inString" : "",
+             "bigrams" : [],
+             "tracxInputs":[],
+             "tracxHidden":[],
+             "tracxOutputs":[],
+             "deltas": [],
+             "totalDelta": 0,
+             "meanDelta":  0,
+             "testError": []
+         }
 
     def set_input_encodings(self, newEncodings):
         #return the input encoding for this token
@@ -105,19 +121,24 @@ class Tracx:
         tempitem = list(newEncodings.values())[0]
         self.inputWidth = len(tempitem)
 
+    def get_empty_hidden(self):
+        #return the input encoding for this token
+        return np.zeros(self.inputWidth + 1) 
+
     def get_input_encoding(self, token):
         #return the input encoding for this token
         return self.inputEncodings[token]
         
-
     def create_input_encodings(self,method="local"):
         #set up input vectors for each token
         self.inputEncoding = method
         tokens = self.get_unique_items() #find unique tokens
+        #generate the input vectors
+        self.inputEncodings = {}
+        self.inputWidth = len(tokens)
+        #include blank input as  a zero vector
+        self.inputEncodings[" "] = np.zeros(self.inputWidth) 
         if self.inputEncoding == "binary":
-            #generate the input vectors
-            self.inputEncodings = {}
-            self.inputWidth = len(tokens)
             #binary encoding - each  letter numbered and
             #represented by corresponding 8bit binary array of -1 and 1.
             for idx in range(len(tokens)):
@@ -127,8 +148,6 @@ class Tracx:
         elif  self.inputEncoding == "local":
             #local encoding - one column per letter.
             #i-th column +1, all others -1
-            self.inputWidth = len(tokens)
-            self.inputEncodings = {}
             bipolarArray = -1. * np.ones(self.inputWidth)       
             idx = 0
             for x in tokens:
@@ -201,7 +220,7 @@ class Tracx:
         else:
             input1 = token1
             input2 = token2
-        inputfull   = []
+        inputfull = []
         inputfull.extend(input1)
         inputfull.extend(input2)
         inputfull.append(1.)  #1 for bias
@@ -233,16 +252,16 @@ class Tracx:
         # so output errors is each diff multiplied by appropriate
         # derivative of output activation
         # 1st get deriv
-        layer_2_delta = np.atleast_2d(layer_2_error * self.d_sigmoid(net["output"]))
-        
+        layer_2_delta = np.atleast_2d(layer_2_error * self.d_sigmoid(net["output"]))      
         # So change weights is this deriv times hidden activations
         dE_dw = np.atleast_2d(net["hidden"]) * layer_2_delta.T
+
         # multiplied by learning rate and with momentum added
-        self.deltas[1] = dE_dw.T * self.learningRate + self.deltas[1] * self.momentum
-            
+        self.deltas[1] = dE_dw.T * self.learningRate + self.deltas[1] * self.momentum          
+
         # Errors on hidden layer are ouput errors back propogated
-        layer_1_error = layer_2_delta.dot(self.layer[1].T)
-        
+        layer_1_error = layer_2_delta.dot(self.layer[1].T)      
+
         layer_1_delta = layer_1_error * self.d_sigmoid(np.atleast_2d(net["hidden"]))
   
         #change in weights is this times inputs but not including bias  
@@ -251,58 +270,75 @@ class Tracx:
         
         self.deltas[0] = dE_dw.T * self.learningRate + self.deltas[0] * self.momentum
       
-        # update weights (.T because these things always get tangled!!)
+        # update weights 
         self.layer[0] -= self.deltas[0]
         self.layer[1] -= self.deltas[1]
+        
 
-    def train_network(self, steps = -1, printProgress = False):
-        # TODO add try & catch code
+    def step_forward(self, inString,start = 0, stop = -1,track_every = 1, trace = True, train = False):
+        '''the main routine for stepping through inputs '''
         
         # how many steps do we train for on this call
-        if steps <= 0:
-            untilStep = self.maxSteps
+        if stop <= 0: 
+            untilStep = len(inString)-1
         else:
-            untilStep = np.min(self.maxSteps,self.currentStep+steps)
+            untilStep = np.min(len(inString)-1,start+stop)
 
-        lastDelta =99
-        Input =[0,0]
-        net = []
+        stringResult = self.create_result_object()
+        stringResult["InString"]= inString
         
+        #initialise some variables
+        token = [0, 1] 
+        Input = [0, 1]
+        net = {}
+        net["delta"] = 99
+        net["hidden"] = self.get_empty_hidden()
+         
         # the main training loop
-        while self.currentStep < untilStep:
-            # read and encode the first bit of training data
-            if lastDelta < self.recognitionCriterion:
-                # new input is hidden unit representation
-                Input[0] = net["hidden"][:-1] #not including the bias
-            else:
-                # input is next training item
-                Input[0] = self.inputEncodings[self.trainingData[self.currentStep % self.trainingLength]]
-            Input[1] = self.inputEncodings[self.trainingData[(self.currentStep + 1) % self.trainingLength]]
-
+        for i in range(start,untilStep):
+            token[0] = inString[i]
+            token[1] = inString[i+1]
+            Input[0] = self.inputEncodings[token[0]]
+            Input[1] = self.inputEncodings[token[1]]            
+            if self.TracxVersion == 1:        
+                if i > start and net["delta"] < self.recognitionCriterion:
+                    # new input is last hidden unit representation
+                    Input[0] = net["hidden"][:-1]   # not including bias
+                    token[0] = "#"
+            else: #TRACX 2.0 French & Cotrell, Cogsci 2013
+                d = np.tanh(self.coeff_tanh * net["delta"])   
+                Input[0] = np.add(np.multiply(d,Input[0]),np.multiply(1-d,net["hidden"][:-1]))
+                
             net = self.network_output(Input[0],Input[1])
+            if train:
+                if (self.TracxVersion == 2 or  #TRACX 2.0 always backprop 
+                    net["delta"] > self.recognitionCriterion  or  #TRACX 1.0 train netowrk if error large
+                    np.random.rand() <= self.reinforcementProbability): # or if probabilisticaly small error and below threshold
+                    self.back_propogate_error(net)
+                    net  = self.network_output(Input[0], Input[1])
+            
+            if trace:
+                stringResult["bigrams"].append("".join(token))
+                stringResult["deltas"].append(net["delta"])
+                stringResult["tracxInputs"].append(Input)
+                stringResult["tracxHidden"].append(net["hidden"])
+                stringResult["tracxOutputs"].append(net["output"].tolist()) #simplfy type
+                stringResult["totalDelta"] += net["delta"]
 
-            # if on input the LHS comes from an internal representation then only
-            # do a learning pass 25% of the time, since internal representations,
-            # since internal representations are attentionally weaker than input
-            # from the real, external world.
-            if (lastDelta > self.recognitionCriterion  or  #train netowrk if error large
-                np.random.rand() <= self.reinforcementProbability): # or if small error and below threshold
-                self.back_propogate_error(net)
-                net = self.network_output(Input[0], Input[1])
-            lastDelta = net["delta"]
-            if printProgress and self.currentStep % self.trackingInterval == 1:
-                self.trackingSteps.append(self.currentStep)
+            if (track_every > 0 and i % track_every == 1):
+                self.trackingSteps.append(i)
                 # if tracking turned on we test the network
                 # at fixed intervals with a set of test bigrams
                 for x in self.trackingWords:
                     ret = self.test_string(x)
-                    self.trackingResults[x].append([self.currentStep, ret["totalDelta"]])
-            self.currentStep += 1
-        return True
-#        catch(err){
-#            console.log(err)
-#            print("TRACX.trainNetwork Err: " + err.message + " ")
-#            return False
+                    self.trackingResults[x].append([i, ret["totalDelta"]])
+
+        stringResult["meanDelta"] = stringResult["totalDelta"]/(len(inString)-1)      
+        return stringResult
+
+
+    def train_network(self, steps = -1, track_every = 50,trace=False):
+        return self.step_forward(self.trainingData,0,-1,track_every,trace = trace, train = True)        
 
     def test_string(self, inString):
         '''Get network output for a single word input.
@@ -311,57 +347,13 @@ class Tracx:
         testing each bigram and return encodings and network activations.
         It also returns the average delta/error per bigram and the total delta.
         '''
-        #TODO - error handling??
-        stringResult =  {"inString" : inString,
-                         "bigrams" : [],
-                         "tracxInputs":[],
-                         "tracxHidden":[],
-                         "tracxOutputs":[],
-                         "deltas": [],
-                         "totalDelta": 0,
-                         "meanDelta":  0,
-                         "testError": []
-                         }
-
-        Input = [0, 1]
-        token = [0, 1]        
-        if self.testErrorType == "always":
-            # used in the paper
-            # always pass through hidden network activation
-            CRITERION = 1000
-        elif self.testErrorType == "conditional":
-            # only use hidden activation if we have meet criterion
-            CRITERION = self.recognitionCriterion
-        else:
-            # never pass the hidden activation
-            CRITERION = -1
-        net = {"delta":100}
-        for i in range(len(inString)-1):
-            token[0] = inString[i]
-            token[1] = inString[i+1]
-            if i > 0 and net["delta"] < CRITERION:
-                # new input is last hidden unit representation
-                Input[0] = net["hidden"][:-1]   # not including bias
-                token[0] = "#"
-            else:
-                Input[0] = self.inputEncodings[token[0]]
-            Input[1] = self.inputEncodings[token[1]]
-            net = self.network_output(Input[0],Input[1])
-            stringResult["bigrams"].append("".join(token))
-            stringResult["deltas"].append(net["delta"])
-            stringResult["tracxInputs"].append(Input)
-            stringResult["tracxHidden"].append(net["hidden"])
-            stringResult["tracxOutputs"].append(net["output"].tolist()) #simplfy type
-            stringResult["totalDelta"] += net["delta"]
-     
-        stringResult["meanDelta"] = stringResult["totalDelta"]/(len(inString)-1)
-        return stringResult
-
+        return self.step_forward(inString,0,-1,-1,trace = True, train = False)        
+   
     def test_strings(self, inStrings):
         '''A function to test what the network has learned.
 
-        We pass a list of test words ['ab','bc',...] or a comma separate
-        string 'ab,bc,...' or even a mixture of both!! 
+        We pass a list of test words ['ab','bc',...] or a comma separated
+        string 'ab,bc,...' 
         It tests each one returning a dict object containing the
         test_string result for each word and overall mean delta per item.
         
@@ -370,7 +362,10 @@ class Tracx:
         stringResults = {}
         totalDelta = 0
         wordcount = 0
-        allwords = ",".join(inStrings).split(",") #magic to combine list & csv
+        if type(inStrings) is str:
+            allwords = inStrings.split(",")
+        else:
+            allwords = ",".join(inStrings).split(",") #magic to combine list & csv
         for w in allwords:
             if len(w)>1:
                 stringResults[w] = self.test_string(w)

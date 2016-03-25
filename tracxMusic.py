@@ -6,7 +6,6 @@ Created on Tue Feb  2 12:48:08 2016
 """
 
 import tracx
-import numpy as np
 import pandas as pd
 
 tracx1 = tracx.Tracx()
